@@ -280,7 +280,7 @@ def prepare_wmt_data(data_dir, en_vocabulary_size, fr_vocabulary_size, tokenizer
 
 
 def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev_path, from_vocabulary_size,
-                 to_vocabulary_size , tokenizer=None):
+                 to_vocabulary_size, tokenizer=None):
   """Preapre all necessary files that are required for the training.
 
     Args:
