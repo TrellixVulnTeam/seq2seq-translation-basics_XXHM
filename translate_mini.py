@@ -22,8 +22,7 @@ tf.reset_default_graph()
 PAD = 0
 EOS = 1
 
-file_vocab_size = 10000 #pseudo vocab size
-vocab_size = 10
+vocab_size = 130 #pseudo vocab size
 input_embedding_size = 20
 encoder_hidden_units = 20 
 decoder_hidden_units = 20
@@ -34,13 +33,13 @@ decoder_hidden_units = 20
 
 #=====================PREPARE TRAINING DATA============================================#
 
-from_train, to_train, from_dev, to_dev, _, _ = utils.prepare_data(data_dir, 
+from_train, to_train, from_dev, to_dev, from_vocab_path, to_vocab_path = utils.prepare_data(data_dir, 
  	from_train_path, 
  	to_train_path, 
  	from_dev_path, 
  	to_dev_path, 
- 	file_vocab_size,
-   file_vocab_size)
+ 	vocab_size,
+   vocab_size)
 
 
 #====================BUILD THE TENSORFLOW GRAPH =======================================#
@@ -256,10 +255,10 @@ with tf.Session() as sess:
 
 
 	###Training
-	batch_size = 100
-	batches = helpers.random_sequences(length_from=3, length_to=8,
-	                                   vocab_lower=2, vocab_upper=10,
-	                                   batch_size=batch_size)  #this method returns an iterator
+	batch_size = 5
+	# batches = helpers.random_sequences(length_from=3, length_to=8,
+	#                                    vocab_lower=2, vocab_upper=10,
+	#                                    batch_size=batch_size)  #this method returns an iterator
 	
 	#each iteration returns a list of 100 lists
 	# train_from_lines = open(from_train).readlines()
@@ -268,16 +267,15 @@ with tf.Session() as sess:
 	def next_feed():
 		
   		# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
-  		# batch_source,batch_target = helpers.get_batch(from_train, to_train, batch_size)
+  		batch_source,batch_target = helpers.get_batch(from_train, to_train, batch_size)
 
   		# [train_from_lines[x].strip().split() for x in lines_indices]
   		# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
 
 
-		batch = next(batches)
-		encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch)
+		encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source)
 		decoder_targets_, _ = helpers.batch(
-	        [(sequence) + [EOS] + [PAD] * 2 for sequence in batch]
+	        [(sequence) + [EOS] + [PAD] * 2 for sequence in batch_target]
 	    )
 		return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_}
 
