@@ -57,6 +57,7 @@ from_train, to_train, from_dev, to_dev, from_vocab_path, to_vocab_path = utils.p
 encoder_inputs = tf.placeholder(shape = (None,None), dtype= tf.int32, name = "encoder_inputs")
 encoder_inputs_length = tf.placeholder(shape = (None,), dtype= tf.int32, name = "encoder_inputs_length")
 decoder_targets= tf.placeholder(shape = (None,None), dtype= tf.int32, name = "decoder_targets")
+decoder_inputs_length = tf.placeholder(shape = (None,), dtype= tf.int32, name = "encoder_inputs_length")
 
 # build embeddings
 embeddings = tf.Variable(tf.random_uniform([vocab_size, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
@@ -111,7 +112,8 @@ with tf.variable_scope('decoder') as scope:
 
 	decoder_cell = tf.contrib.rnn.BasicLSTMCell(decoder_hidden_units)
 	encoder_max_time, batch_size = tf.unstack(tf.shape(encoder_inputs))
-	decoder_lengths = encoder_inputs_length+3
+	decoder_lengths = decoder_inputs_length
+	print(decoder_lengths)
 
 	#define weights and biases
 	W = tf.Variable(tf.random_uniform([decoder_hidden_units, vocab_size], -1,1), dtype = tf.float32)
@@ -231,7 +233,9 @@ with tf.variable_scope('decoder') as scope:
 	#loss function
 	loss = tf.reduce_mean(stepwise_cross_entropy)
 	#train it 
-	train_op = tf.train.AdamOptimizer().minimize(loss)
+	# train_op = tf.train.AdagradOptimizer(0.5).minimize(loss)
+	# train_op = tf.train.AdamOptimizer().minimize(loss)
+	train_op = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
 saver = tf.train.Saver()
 
 
@@ -274,19 +278,24 @@ with tf.Session() as sess:
 
 
 		encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source)
-		decoder_targets_, _ = helpers.batch(
-	        [(sequence) + [EOS] + [PAD] * 2 for sequence in batch_target]
+		# print("encoder lengths",encoder_input_lengths_)
+		decoder_targets_, decoder_inputs_length_ = helpers.batch(
+	        [(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target]
 	    )
-		return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_}
+		# print("decoder lengths",decoder_inputs_length_)
+		return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_,
+		decoder_inputs_length: decoder_inputs_length_}
 
 	loss_track = []
-	max_batches = 1001
-	batches_in_epoch = 100
+	max_batches = 4001
+	batches_in_epoch = 1001
 	
 
 	#tensorboard
 	writer = tf.summary.FileWriter('log', sess.graph)
-	
+	_,eng_words = utils.initialize_vocabulary("./data/vocab130.from")
+	_,fr_words = utils.initialize_vocabulary("./data/vocab130.to")
+
 
 	try:
 	    for batch in range(max_batches):
@@ -302,13 +311,33 @@ with tf.Session() as sess:
 	            print('batch {}'.format(batch))
 	            print('  minibatch loss: {}'.format(sess.run(loss, fd)))
 	            predict_ = sess.run(decoder_prediction, fd)
+	            
+	            pred_str = []
 	            for i, (inp, pred) in enumerate(zip(fd[encoder_inputs].T, predict_.T)):
 	                print('  sample {}:'.format(i + 1))
-	                print('    input     > {}'.format(inp))
-	                print('    predicted > {}'.format(pred))
+	                # print('    input     > {}'.format(inp))
+	                # print('    predicted > {}'.format(pred))
+	                input_str = [eng_words[x] for x in inp if x != 0]
+	                target_str = [fr_words[x] for x in pred]
+
+	               	input_string = " ".join([str(x) for x in input_str  ])
+	                target_string =" ".join([str(x) for x in target_str ])
+	                print('      input   >',input_string)
+	                print('    predicted >',target_string)
+
+
+	                # print('    predicted > {}'.format(fr_words[pred]]
+	                # input_str.append(eng_words[inp])
+	                # pred_str.append(fr_words[pred])
+	                # print('    input     > {}'.format(eng_words[inp]))
+	                # print('    predicted > {}'.format(fr_words[pred]))
 	                if i >= 2:
 	                    break
+
 	            print()
+	            # print("".join([str(x) for x in pred_str ]))
+
+
 
 	except KeyboardInterrupt:
 	    print('training interrupted')
