@@ -23,8 +23,8 @@ PAD = 0
 EOS = 1
 
 file_vocab_size = 10000 #pseudo vocab size
-vocab_size = 10
-input_embedding_size = 20
+vocab_size = 12
+input_embedding_size = 10
 encoder_hidden_units = 20 
 decoder_hidden_units = 20
 
@@ -34,13 +34,13 @@ decoder_hidden_units = 20
 
 #=====================PREPARE TRAINING DATA============================================#
 
-from_train, to_train, from_dev, to_dev, _, _ = utils.prepare_data(data_dir, 
- 	from_train_path, 
- 	to_train_path, 
- 	from_dev_path, 
- 	to_dev_path, 
- 	file_vocab_size,
-   file_vocab_size)
+# from_train, to_train, from_dev, to_dev, _, _ = utils.prepare_data(data_dir, 
+#  	from_train_path, 
+#  	to_train_path, 
+#  	from_dev_path, 
+#  	to_dev_path, 
+#  	file_vocab_size,
+#    file_vocab_size)
 
 
 #====================BUILD THE TENSORFLOW GRAPH =======================================#
@@ -71,9 +71,10 @@ embeddings = tf.Variable(tf.random_uniform([vocab_size, input_embedding_size] ,-
 with tf.variable_scope('encoder') as scope:
 
 	encoder_inputs_embedded = tf.nn.embedding_lookup(embeddings, encoder_inputs)
+	embedding_input_shape = tf.shape(encoder_inputs_embedded)
 	encoder_cell = tf.contrib.rnn.BasicLSTMCell(encoder_hidden_units)
 	# make encoder system using dynamic RNN which does BAsic RNN under the hood
-	# 
+	# print("input embedding", encoder_inputs_embedded )
 	encoder_outputs,encoder_final_state =  tf.nn.dynamic_rnn(cell=encoder_cell, 
 			inputs= encoder_inputs_embedded,
 			sequence_length = encoder_inputs_length, 
@@ -83,7 +84,8 @@ with tf.variable_scope('encoder') as scope:
 			# If false, these Tensors must be shaped [batch_size, max_time, depth].True is a bit more efficient because it avoids 
 			# transposes at the beginning and end of the RNN calculation. However, most TensorFlow data is batch-major, so by default
 			#  this function accepts input and emits output in batch-major form.
-
+	encoder_output_shape = tf.shape(encoder_outputs)
+	encoder_final_state_shape = tf.shape(encoder_final_state)
 
 
 
@@ -111,6 +113,7 @@ with tf.variable_scope('encoder') as scope:
 with tf.variable_scope('decoder') as scope:
 
 	decoder_cell = tf.contrib.rnn.BasicLSTMCell(decoder_hidden_units)
+	print(decoder_cell.output_size)
 	encoder_max_time, batch_size = tf.unstack(tf.shape(encoder_inputs))
 	decoder_lengths = encoder_inputs_length+3
 
@@ -158,7 +161,8 @@ with tf.variable_scope('decoder') as scope:
 
 	#soft attention mechanism,
 	def loop_fn_transition(time,previous_output,previous_state, previous_loop_state):
-
+		previous_out_shape = tf.shape(previous_output)
+		print("previous out shape",previous_out_shape)
 		# to get the next input 
 		def get_next_input():
 			#dot product between previous output and weights+ biases
@@ -200,7 +204,9 @@ with tf.variable_scope('decoder') as scope:
 			return loop_fn_transition(time,previous_output,previous_state, previous_loop_state)
 
 	decoder_outputs_ta, decoder_final_state, _ =  tf.nn.raw_rnn(decoder_cell,loop_fn)
+	
 	decoder_outputs = decoder_outputs_ta.stack()
+	decoder_outputs_shape= tf.shape(decoder_outputs)
 
 
 	#to convert output to human readable prediction
@@ -212,11 +218,14 @@ with tf.variable_scope('decoder') as scope:
 	#flettened output tensor
 	decoder_outputs_flat = tf.reshape(decoder_outputs, (-1, decoder_dim))
 	#pass flattened tensor through decoder
+	decoder_outputs_flat_shape = tf.shape(decoder_outputs_flat)
 	decoder_logits_flat = tf.add(tf.matmul(decoder_outputs_flat, W), b)
 	#prediction vals
 	decoder_logits = tf.reshape(decoder_logits_flat, (decoder_max_steps, decoder_batch_size, vocab_size))
 
-
+	# print(tf.shape(decoder_outputs))
+	decoder_logits_shape = tf.shape(decoder_logits)
+	decoder_targets_shape = tf.shape(tf.one_hot(decoder_targets, depth=vocab_size, dtype=tf.float32))
 
 	#final prediction
 	decoder_prediction = tf.argmax(decoder_logits, 2)
@@ -256,7 +265,7 @@ with tf.Session() as sess:
 
 
 	###Training
-	batch_size = 100
+	batch_size = 3
 	batches = helpers.random_sequences(length_from=3, length_to=8,
 	                                   vocab_lower=2, vocab_upper=10,
 	                                   batch_size=batch_size)  #this method returns an iterator
@@ -279,11 +288,16 @@ with tf.Session() as sess:
 		decoder_targets_, _ = helpers.batch(
 	        [(sequence) + [EOS] + [PAD] * 2 for sequence in batch]
 	    )
+		print("=====ENCODER====")
+		print(encoder_inputs_)
+		# print(encoder_input_lengths_)
+
+
 		return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_}
 
 	loss_track = []
-	max_batches = 1001
-	batches_in_epoch = 100
+	max_batches = 1
+	batches_in_epoch = 1
 	
 
 	#tensorboard
@@ -293,8 +307,21 @@ with tf.Session() as sess:
 	try:
 	    for batch in range(max_batches):
 	        fd = next_feed()
+	        encoder_inputs_shape,encoder_output_shape,encoder_final_state_shape, decoder_outputs_shape, decoder_outputs_flat_shape, decoder_logits_shape,decoder_targets_shape = sess.run([embedding_input_shape,encoder_output_shape,
+	        	encoder_final_state_shape,decoder_outputs_shape,decoder_outputs_flat_shape,decoder_logits_shape,
+	        	decoder_targets_shape],fd)
+	        print("encoder_inputs_shape",encoder_inputs_shape)
+	        print("encoder_output_shape",encoder_output_shape)
+	        print("encoder_final_state_shape",encoder_final_state_shape,
+"decoder_outputs_shape",decoder_outputs_shape,
+"decoder_outputs_flat_shape",decoder_outputs_flat_shape,
+"decoder_logits_shape",decoder_logits_shape,
+"decoder_targets_shape",decoder_targets_shape)
+
+
 	        _, l = sess.run([train_op, loss], fd)
 	        loss_track.append(l)
+
 
 	        if batch == 0 or batch % batches_in_epoch == 0:
 	            saver.save(sess, os.path.join(CHK_DIR, "model.ckpt"), batch)
