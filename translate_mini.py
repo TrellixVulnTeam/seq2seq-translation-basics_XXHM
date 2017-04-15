@@ -5,16 +5,15 @@ import helpers
 from tensorflow.contrib.tensorboard.plugins import projector
 import os
 import random
-
+import math
 #=====================DEFINE DATA SOURCES============================================#
 data_dir = "data"
-from_train_path = "data/source_train.en"
-to_train_path = "data/target_train.fr"
-from_dev_path = "data/source_dev.en"
-to_dev_path = "data/target_dev.fr"
+from_train_path = "data/eng_train_data"
+to_train_path = "data/fr_train_data"
+from_dev_path = "data/eng_test_data"
+to_dev_path = "data/fr_test_data"
 CHK_DIR="./data/checkpoints"
 LOGDIR = "./log"
-training_source_file = "./data/source_train.en.ids10000"
 
 
 tf.reset_default_graph()
@@ -22,7 +21,8 @@ tf.reset_default_graph()
 PAD = 0
 EOS = 1
 
-vocab_size = 130 #pseudo vocab size
+vocab_size_encoder = 1700 #pseudo vocab size
+vocab_size_decoder = 2300
 input_embedding_size = 20
 encoder_hidden_units = 20 
 decoder_hidden_units = 20
@@ -38,8 +38,8 @@ from_train, to_train, from_dev, to_dev, from_vocab_path, to_vocab_path = utils.p
  	to_train_path, 
  	from_dev_path, 
  	to_dev_path, 
- 	vocab_size,
-   vocab_size)
+ 	vocab_size_encoder,
+   vocab_size_decoder)
 
 
 #====================BUILD THE TENSORFLOW GRAPH =======================================#
@@ -60,7 +60,8 @@ decoder_targets= tf.placeholder(shape = (None,None), dtype= tf.int32, name = "de
 decoder_inputs_length = tf.placeholder(shape = (None,), dtype= tf.int32, name = "encoder_inputs_length")
 
 # build embeddings
-embeddings = tf.Variable(tf.random_uniform([vocab_size, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
+embeddings_eng = tf.Variable(tf.random_uniform([vocab_size_encoder, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
+embeddings_fr = tf.Variable(tf.random_uniform([vocab_size_decoder, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
 
 
 '''				  ___ _  _  ___ ___  ___  ___ ___ 
@@ -70,7 +71,7 @@ embeddings = tf.Variable(tf.random_uniform([vocab_size, input_embedding_size] ,-
 				                                  '''
 with tf.variable_scope('encoder') as scope:
 
-	encoder_inputs_embedded = tf.nn.embedding_lookup(embeddings, encoder_inputs)
+	encoder_inputs_embedded = tf.nn.embedding_lookup(embeddings_eng, encoder_inputs)
 	encoder_cell = tf.contrib.rnn.BasicLSTMCell(encoder_hidden_units)
 	# make encoder system using dynamic RNN which does BAsic RNN under the hood
 	# 
@@ -113,11 +114,11 @@ with tf.variable_scope('decoder') as scope:
 	decoder_cell = tf.contrib.rnn.BasicLSTMCell(decoder_hidden_units)
 	encoder_max_time, batch_size = tf.unstack(tf.shape(encoder_inputs))
 	decoder_lengths = decoder_inputs_length
-	print(decoder_lengths)
+	# print(decoder_lengths)
 
 	#define weights and biases
-	W = tf.Variable(tf.random_uniform([decoder_hidden_units, vocab_size], -1,1), dtype = tf.float32)
-	b = tf.Variable(tf.zeros([vocab_size]), dtype = tf.float32)
+	W = tf.Variable(tf.random_uniform([decoder_hidden_units, vocab_size_decoder], -1,1), dtype = tf.float32)
+	b = tf.Variable(tf.zeros([vocab_size_decoder]), dtype = tf.float32)
 
 
 	#create padded inputs for the decoder from the word embeddings
@@ -129,8 +130,8 @@ with tf.variable_scope('decoder') as scope:
 	pad_time_slice = tf.zeros([batch_size], dtype=tf.int32, name='PAD')
 
 	#retrieves rows of the params tensor. The behavior is similar to using indexing with arrays in numpy
-	eos_step_embedded = tf.nn.embedding_lookup(embeddings, eos_time_slice)
-	pad_step_embedded = tf.nn.embedding_lookup(embeddings, pad_time_slice)
+	eos_step_embedded = tf.nn.embedding_lookup(embeddings_fr, eos_time_slice)
+	pad_step_embedded = tf.nn.embedding_lookup(embeddings_fr, pad_time_slice)
 
 
 
@@ -170,7 +171,7 @@ with tf.variable_scope('decoder') as scope:
 			#returns the index with highest probability
 			prediction=tf.argmax(output_logits, axis = 1)
 
-			next_input = tf.nn.embedding_lookup(embeddings, prediction)
+			next_input = tf.nn.embedding_lookup(embeddings_fr, prediction)
 			return next_input
 
 
@@ -215,7 +216,7 @@ with tf.variable_scope('decoder') as scope:
 	#pass flattened tensor through decoder
 	decoder_logits_flat = tf.add(tf.matmul(decoder_outputs_flat, W), b)
 	#prediction vals
-	decoder_logits = tf.reshape(decoder_logits_flat, (decoder_max_steps, decoder_batch_size, vocab_size))
+	decoder_logits = tf.reshape(decoder_logits_flat, (decoder_max_steps, decoder_batch_size, vocab_size_decoder))
 
 
 
@@ -226,7 +227,7 @@ with tf.variable_scope('decoder') as scope:
 
 	###OPTIMIZE
 	stepwise_cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-		labels=tf.one_hot(decoder_targets, depth=vocab_size, dtype=tf.float32),
+		labels=tf.one_hot(decoder_targets, depth=vocab_size_decoder, dtype=tf.float32),
 	    logits=decoder_logits,
 	)
 
@@ -234,8 +235,8 @@ with tf.variable_scope('decoder') as scope:
 	loss = tf.reduce_mean(stepwise_cross_entropy)
 	#train it 
 	# train_op = tf.train.AdagradOptimizer(0.5).minimize(loss)
-	# train_op = tf.train.AdamOptimizer().minimize(loss)
-	train_op = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
+	train_op = tf.train.AdamOptimizer().minimize(loss)
+	# train_op = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
 saver = tf.train.Saver()
 
 
@@ -259,7 +260,7 @@ with tf.Session() as sess:
 
 
 	###Training
-	batch_size = 5
+	batch_size = 10
 	# batches = helpers.random_sequences(length_from=3, length_to=8,
 	#                                    vocab_lower=2, vocab_upper=10,
 	#                                    batch_size=batch_size)  #this method returns an iterator
@@ -268,10 +269,10 @@ with tf.Session() as sess:
 	# train_from_lines = open(from_train).readlines()
 	# train_to_lines = open(to_train).readlines()
 
-	def next_feed():
+	def next_feed(from_,to_):
 		
   		# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
-  		batch_source,batch_target = helpers.get_batch(from_train, to_train, batch_size)
+  		batch_source,batch_target = helpers.get_batch(from_, to_, batch_size)
 
   		# [train_from_lines[x].strip().split() for x in lines_indices]
   		# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
@@ -287,43 +288,48 @@ with tf.Session() as sess:
 		decoder_inputs_length: decoder_inputs_length_}
 
 	loss_track = []
-	max_batches = 4001
-	batches_in_epoch = 1001
+	max_batches = 6001
+	batches_in_epoch = 201
 	
 
 	#tensorboard
 	writer = tf.summary.FileWriter('log', sess.graph)
-	_,eng_words = utils.initialize_vocabulary("./data/vocab130.from")
-	_,fr_words = utils.initialize_vocabulary("./data/vocab130.to")
+	_,eng_words = utils.initialize_vocabulary(from_vocab_path)
+	_,fr_words = utils.initialize_vocabulary(to_vocab_path)
 
 
 	try:
 	    for batch in range(max_batches):
-	        fd = next_feed()
+	        fd = next_feed(from_train,to_train)
 	        _, l = sess.run([train_op, loss], fd)
-	        loss_track.append(l)
+	        perplexity = math.exp(float(l)) if l < 300 else float("inf")
+
+	        loss_track.append(perplexity)
 
 	        if batch == 0 or batch % batches_in_epoch == 0:
+	            fd2 = next_feed(from_dev, to_dev)
 	            saver.save(sess, os.path.join(CHK_DIR, "model.ckpt"), batch)
 	            # sess.run(embeddings)
+	            l2 = sess.run(loss, fd2)
+	            p_ = math.exp(float(l2)) if l2 < 300 else float("inf")
 
 
 	            print('batch {}'.format(batch))
-	            print('  minibatch loss: {}'.format(sess.run(loss, fd)))
-	            predict_ = sess.run(decoder_prediction, fd)
+	            print('  minibatch perplexity: {}'.format(p_))
+	            predict_ = sess.run(decoder_prediction, fd2)
 	            
 	            pred_str = []
 	            for i, (inp, pred) in enumerate(zip(fd[encoder_inputs].T, predict_.T)):
 	                print('  sample {}:'.format(i + 1))
-	                # print('    input     > {}'.format(inp))
-	                # print('    predicted > {}'.format(pred))
-	                input_str = [eng_words[x] for x in inp if x != 0]
-	                target_str = [fr_words[x] for x in pred]
+	                print('    input     > {}'.format(inp))
+	                print('    predicted > {}'.format(pred))
+	                # input_str = [eng_words[x] for x in inp if x != 0]
+	                # target_str = [fr_words[x] for x in pred]
 
-	               	input_string = " ".join([str(x) for x in input_str  ])
-	                target_string =" ".join([str(x) for x in target_str ])
-	                print('      input   >',input_string)
-	                print('    predicted >',target_string)
+	               	# input_string = " ".join([str(x) for x in input_str  ])
+	                # target_string =" ".join([str(x) for x in target_str ])
+	                # print('      input   >',input_string)
+	                # print('    predicted >',target_string)
 
 
 	                # print('    predicted > {}'.format(fr_words[pred]]
@@ -348,10 +354,10 @@ with tf.Session() as sess:
 	plt.plot(loss_track)
 	plt.show()
 	print('loss {:.4f} after {} examples (batch_size={})'.format(loss_track[-1], len(loss_track)*batch_size, batch_size))
-	config = tf.contrib.tensorboard.plugins.projector.ProjectorConfig()
-	embedding_conf = config.embeddings.add()
-	embedding_conf.tensor_name = embeddings.name
-	projector.visualize_embeddings(writer, config)
+	# config = tf.contrib.tensorboard.plugins.projector.ProjectorConfig()
+	# embedding_conf = config.embeddings.add()
+	# embedding_conf.tensor_name = embeddings.name
+	# projector.visualize_embeddings(writer, config)
 
 	# embedding_conf.metadata_path = os.path.join( 'metadata.tsv')
 
