@@ -6,6 +6,7 @@ from tensorflow.contrib.tensorboard.plugins import projector
 import os
 import random
 import math
+import csv
 #=====================DEFINE DATA SOURCES============================================#
 data_dir = "data"
 from_train_path = "data/eng_train_data"
@@ -26,6 +27,8 @@ vocab_size_decoder = 2300
 input_embedding_size = 20
 encoder_hidden_units = 20 
 decoder_hidden_units = 20
+max_batches = 6001
+batches_in_epoch = 201
 
 ## In the original paper, it was 1000, we can increase it
 
@@ -234,126 +237,128 @@ with tf.variable_scope('decoder') as scope:
 	#loss function
 	loss = tf.reduce_mean(stepwise_cross_entropy)
 	#train it 
-	# train_op = tf.train.AdagradOptimizer(0.5).minimize(loss)
+	# train_op = tf.train.AdagradOptimizer(0.001).minimize(loss)
 	train_op = tf.train.AdamOptimizer().minimize(loss)
 	# train_op = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
 saver = tf.train.Saver()
 
 
-with tf.Session() as sess:
-	ckpt = tf.train.get_checkpoint_state(CHK_DIR)
-	if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
-		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-		saver.restore(sess, ckpt.model_checkpoint_path)
-	else:
-		print("Created model with fresh parameters.")
-		sess.run(tf.global_variables_initializer())
-
-
-
-
-	# sess.run(tf.global_variables_initializer())
-	# E = tf.Variable([0.0], name='embedding')
-	# place = tf.placeholder(tf.float32, shape=embeddings.shape)
-	# set_E = tf.assign(embeddings)
-	# sess.run(set_E, feed_dict={place: embeddings})
-
-
-	###Training
-	batch_size = 10
-	# batches = helpers.random_sequences(length_from=3, length_to=8,
-	#                                    vocab_lower=2, vocab_upper=10,
-	#                                    batch_size=batch_size)  #this method returns an iterator
-	
-	#each iteration returns a list of 100 lists
-	# train_from_lines = open(from_train).readlines()
-	# train_to_lines = open(to_train).readlines()
-
-	def next_feed(from_,to_):
+#gets the next batch of inputs and targets , random batch_size sentences , put padding as required
+#from_: the source file
+#to_ : the target file
+def next_feed(from_,to_,batch_size):
 		
-  		# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
-  		batch_source,batch_target = helpers.get_batch(from_, to_, batch_size)
+  	# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
+  	batch_source,batch_target = helpers.get_batch(from_, to_, batch_size)
 
-  		# [train_from_lines[x].strip().split() for x in lines_indices]
-  		# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
+  	# [train_from_lines[x].strip().split() for x in lines_indices]
+  	# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
 
 
-		encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source)
-		# print("encoder lengths",encoder_input_lengths_)
-		decoder_targets_, decoder_inputs_length_ = helpers.batch(
-	        [(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target]
+	encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source)
+	# print("encoder lengths",encoder_input_lengths_)
+	decoder_targets_, decoder_inputs_length_ = helpers.batch(
+	    [(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target]
 	    )
-		# print("decoder lengths",decoder_inputs_length_)
-		return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_,
+	# print("decoder lengths",decoder_inputs_length_)
+	return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_,
 		decoder_inputs_length: decoder_inputs_length_}
 
-	loss_track = []
-	max_batches = 6001
-	batches_in_epoch = 201
+
+
+def train(batch_size_,load_checkpoint=False):
+	print("calling train-size")
+	with tf.Session() as sess:
+		
+		ckpt = tf.train.get_checkpoint_state(CHK_DIR)
+		if load_checkpoint and ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
+			print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+			saver.restore(sess, ckpt.model_checkpoint_path)
+		else:
+			print("Created model with fresh parameters.")
+			sess.run(tf.global_variables_initializer())
+		###Training
+		batch_size = batch_size_
+		loss_track = []
+		
+		#tensorboard
+		writer = tf.summary.FileWriter('log', sess.graph)
+		_,eng_words = utils.initialize_vocabulary(from_vocab_path)
+		_,fr_words = utils.initialize_vocabulary(to_vocab_path)
+
+
+		try:
+		    for batch in range(max_batches):
+		        fd = next_feed(from_train,to_train,batch_size)
+		        _, l = sess.run([train_op, loss], fd)
+		        perplexity = math.exp(float(l)) if l < 300 else float("inf")
+
+		        loss_track.append(perplexity)
+
+		        if batch == 0 or batch % batches_in_epoch == 0:
+		            fd2 = next_feed(from_dev, to_dev,batch_size)
+		            saver.save(sess, os.path.join(CHK_DIR, "model.ckpt"), batch)
+		            # sess.run(embeddings)
+		            l2 = sess.run(loss, fd2)
+		            p_ = math.exp(float(l2)) if l2 < 300 else float("inf")
+
+
+		            print('batch {}'.format(batch))
+		            print('  minibatch perplexity: {}'.format(p_))
+		            predict_ = sess.run(decoder_prediction, fd2)
+		            
+		            pred_str = []
+		            for i, (inp, pred) in enumerate(zip(fd[encoder_inputs].T, predict_.T)):
+		                print('  sample {}:'.format(i + 1))
+		                print('    input     > {}'.format(inp))
+		                print('    predicted > {}'.format(pred))
+		                input_str = [eng_words[x] for x in inp if x != 0]
+		                try:
+		                	target_str = [fr_words[x] for x in pred]
+		                except:
+		                	print('something happended')
+		                	print(pred)
+		                	for x in pred:
+		                		print x
+
+		               	input_string = " ".join([str(x) for x in input_str  ])
+		                target_string =" ".join([str(x) for x in target_str ])
+		                print('      input   >',input_string)
+		                print('    predicted >',target_string)
+
+
+		                # print('    predicted > {}'.format(fr_words[pred]]
+		                # input_str.append(eng_words[inp])
+		                # pred_str.append(fr_words[pred])
+		                # print('    input     > {}'.format(eng_words[inp]))
+		                # print('    predicted > {}'.format(fr_words[pred]))
+		                if i >= 2:
+		                    break
+
+		            print()
+		            # print("".join([str(x) for x in pred_str ]))
+		
+
+
+
+
+		except KeyboardInterrupt:
+		    print('training interrupted')
+		return loss_track
+
+	
 	
 
-	#tensorboard
-	writer = tf.summary.FileWriter('log', sess.graph)
-	_,eng_words = utils.initialize_vocabulary(from_vocab_path)
-	_,fr_words = utils.initialize_vocabulary(to_vocab_path)
+
+optimizer_data = open("effect_of_optimizer.csv",'a+')
+writer = csv.writer(optimizer_data, delimiter=',',
+                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
+
+loss = train(10)
+writer.writerow(['adam']+loss)
 
 
-	try:
-	    for batch in range(max_batches):
-	        fd = next_feed(from_train,to_train)
-	        _, l = sess.run([train_op, loss], fd)
-	        perplexity = math.exp(float(l)) if l < 300 else float("inf")
-
-	        loss_track.append(perplexity)
-
-	        if batch == 0 or batch % batches_in_epoch == 0:
-	            fd2 = next_feed(from_dev, to_dev)
-	            saver.save(sess, os.path.join(CHK_DIR, "model.ckpt"), batch)
-	            # sess.run(embeddings)
-	            l2 = sess.run(loss, fd2)
-	            p_ = math.exp(float(l2)) if l2 < 300 else float("inf")
-
-
-	            print('batch {}'.format(batch))
-	            print('  minibatch perplexity: {}'.format(p_))
-	            predict_ = sess.run(decoder_prediction, fd2)
-	            
-	            pred_str = []
-	            for i, (inp, pred) in enumerate(zip(fd[encoder_inputs].T, predict_.T)):
-	                print('  sample {}:'.format(i + 1))
-	                print('    input     > {}'.format(inp))
-	                print('    predicted > {}'.format(pred))
-	                # input_str = [eng_words[x] for x in inp if x != 0]
-	                # target_str = [fr_words[x] for x in pred]
-
-	               	# input_string = " ".join([str(x) for x in input_str  ])
-	                # target_string =" ".join([str(x) for x in target_str ])
-	                # print('      input   >',input_string)
-	                # print('    predicted >',target_string)
-
-
-	                # print('    predicted > {}'.format(fr_words[pred]]
-	                # input_str.append(eng_words[inp])
-	                # pred_str.append(fr_words[pred])
-	                # print('    input     > {}'.format(eng_words[inp]))
-	                # print('    predicted > {}'.format(fr_words[pred]))
-	                if i >= 2:
-	                    break
-
-	            print()
-	            # print("".join([str(x) for x in pred_str ]))
-
-
-
-	except KeyboardInterrupt:
-	    print('training interrupted')
-
-
-	#matplotlib inline
-	import matplotlib.pyplot as plt
-	plt.plot(loss_track)
-	plt.show()
-	print('loss {:.4f} after {} examples (batch_size={})'.format(loss_track[-1], len(loss_track)*batch_size, batch_size))
+	# print('loss {:.4f} after {} examples (batch_size={})'.format(loss_track[-1], len(loss_track)*batch_size, batch_size))
 	# config = tf.contrib.tensorboard.plugins.projector.ProjectorConfig()
 	# embedding_conf = config.embeddings.add()
 	# embedding_conf.tensor_name = embeddings.name
