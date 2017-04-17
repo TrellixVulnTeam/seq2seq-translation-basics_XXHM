@@ -1,7 +1,7 @@
 import numpy as np
 import random
 
-def batch(inputs, max_sequence_length=None):
+def batch(inputs, max_sequence_length=None, reverse_input=True):
     """
     Args:
         inputs:
@@ -29,10 +29,16 @@ def batch(inputs, max_sequence_length=None):
     
     for i, seq in enumerate(inputs):
         for j, element in enumerate(seq):
-            inputs_batch_major[i, j] = element
+            if reverse_input:
+                inputs_batch_major[i, (max_sequence_length-1)- j] = element
+            else:
+                inputs_batch_major[i,  j] = element
+
 
     # [batch_size, max_time] -> [max_time, batch_size]
+    # print(inputs_batch_major)
     inputs_time_major = inputs_batch_major.swapaxes(0, 1)
+
 
     return inputs_time_major, sequence_lengths
 
@@ -60,14 +66,10 @@ def random_sequences(length_from, length_to,
             for _ in range(batch_size)
         ]
 
-# batches = random_sequences(length_from=3, length_to=8,
-#                                    vocab_lower=2, vocab_upper=10,
-#                                    batch_size=5)
-# b = next(batches)
-# print(b)
 
-# print(batch(b))
-# def get_batch_size(file)
+
+
+# gets random sentences and pads them
 def get_batch(filename1, filename2,batch_size):
     lines1 = open(filename1).readlines()
     lines2 = open(filename2).readlines()
@@ -77,12 +79,15 @@ def get_batch(filename1, filename2,batch_size):
     batch_source = [map(int,x) for x in batch_source]
     batch_target = [map(int,x) for x in batch_target]
     return batch_source, batch_target
-#     batch_1 = [][lines1[x].strip().split() for x in lines_indices]
-#     for line in lines1:
-#         l = []
 
-# x,y = get_batch("./data/source_dev.en.ids10000", "./data/target_dev.fr.ids10000", 5)
+
+# x,y = get_batch("./data/eng_french_data/eng_test_data.ids1700", "./data/eng_french_data/fr_test_data.ids2300", 5)
 # print("=======")
 # print(x)
 # print(y)
+# x = [[11, 791, 7, 26, 383, 4], [12, 55, 100, 260, 353, 496, 44, 201, 4], [136, 117, 44, 1201, 4], [82, 13, 39, 1101, 6], [136, 326, 10, 233, 342, 685, 53, 44, 4]]
+
+
+# print(batch(x, reverse_input=False))
+# print(batch(x, reverse_input=True))
     # lines = open("./data/source_dev.en.ids10000").readlines()[:5]

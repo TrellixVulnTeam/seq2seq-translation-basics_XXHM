@@ -9,10 +9,10 @@ import math
 import csv
 #=====================DEFINE DATA SOURCES============================================#
 data_dir = "data"
-from_train_path = "data/eng_train_data"
-to_train_path = "data/fr_train_data"
-from_dev_path = "data/eng_test_data"
-to_dev_path = "data/fr_test_data"
+from_train_path = "data/eng_french_data/eng_train_data"
+to_train_path = "data/eng_french_data/fr_train_data"
+from_dev_path = "data/eng_french_data/eng_test_data"
+to_dev_path = "data/eng_french_data/fr_test_data"
 CHK_DIR="./data/checkpoints"
 LOGDIR = "./log"
 
@@ -26,7 +26,7 @@ vocab_size_encoder = 1700 #pseudo vocab size
 vocab_size_decoder = 2300
 input_embedding_size = 20
 encoder_hidden_units = 20 
-decoder_hidden_units = 20
+decoder_hidden_units = 40
 max_batches = 6001
 batches_in_epoch = 201
 
@@ -78,11 +78,12 @@ with tf.variable_scope('encoder') as scope:
 	encoder_cell = tf.contrib.rnn.BasicLSTMCell(encoder_hidden_units)
 	# make encoder system using dynamic RNN which does BAsic RNN under the hood
 	# 
-	encoder_outputs,encoder_final_state =  tf.nn.dynamic_rnn(cell=encoder_cell, 
-			inputs= encoder_inputs_embedded,
-			sequence_length = encoder_inputs_length, 
-			dtype =tf.float32,
-			time_major = True) 
+	# vanilla encoder
+	# encoder_outputs,encoder_final_state =  tf.nn.dynamic_rnn(cell=encoder_cell, 
+	# 		inputs= encoder_inputs_embedded,
+	# 		sequence_length = encoder_inputs_length, 
+	# 		dtype =tf.float32,
+	# 		time_major = True) 
 			# SEE API details, basically if trsue, these Tensors must be shaped [max_time, batch_size, depth].
 			# If false, these Tensors must be shaped [batch_size, max_time, depth].True is a bit more efficient because it avoids 
 			# transposes at the beginning and end of the RNN calculation. However, most TensorFlow data is batch-major, so by default
@@ -94,16 +95,28 @@ with tf.variable_scope('encoder') as scope:
 
 
 	# IMPROVEMENT ON DYMAMIC RNN
-	# ((encoder_fw_inputs, 
-	# 	encoder_bw_inputs, 
-	# 	encoder_fw_final_state, 
-	# 	encoder_bw_final_state)) = ( tf.nn.bidorectional_dynamic_rnn(cell_fw=encoder_cell, 
-	# 		cell_bw= encoder_cell, 
-	# 		inputs= encoder_inputs_embedded,
-	# 		sequence_length = encoder_inputs_length, 
-	# 		dtype =tf.float32,
-	# 		time_major = True)
+	(encoder_fw_outputs, encoder_bw_outputs), (encoder_fw_final_state,encoder_bw_final_state) = tf.nn.bidirectional_dynamic_rnn(cell_fw=encoder_cell, cell_bw= encoder_cell, inputs= encoder_inputs_embedded,sequence_length = encoder_inputs_length, dtype =tf.float32,time_major = True)
 
+
+
+	#Concatenates tensors along one dimension.
+	encoder_outputs = tf.concat((encoder_fw_outputs, encoder_bw_outputs), 2)
+
+	#letters h and c are commonly used to denote "output value" and "cell state". 
+	#http://colah.github.io/posts/2015-08-Understanding-LSTMs/ 
+	#Those tensors represent combined internal state of the cell, and should be passed together. 
+
+	encoder_final_state_c = tf.concat(
+	    (encoder_fw_final_state.c, encoder_bw_final_state.c), 1)
+
+	encoder_final_state_h = tf.concat(
+	    (encoder_fw_final_state.h, encoder_bw_final_state.h), 1)
+
+	#TF Tuple used by LSTM Cells for state_size, zero_state, and output state.
+	encoder_final_state = tf.contrib.rnn.LSTMStateTuple(
+	    c=encoder_final_state_c,
+	    h=encoder_final_state_h
+	)
 
 '''				  ___  ___ ___ ___  ___  ___ ___ 
 				 |   \| __/ __/ _ \|   \| __| _ \
@@ -236,10 +249,17 @@ with tf.variable_scope('decoder') as scope:
 
 	#loss function
 	loss = tf.reduce_mean(stepwise_cross_entropy)
+	tf.summary.scalar('loss', loss)
+	
 	#train it 
 	# train_op = tf.train.AdagradOptimizer(0.001).minimize(loss)
 	train_op = tf.train.AdamOptimizer().minimize(loss)
 	# train_op = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
+merged = tf.summary.merge_all()
+# writer = tf.summary.FileWriter(CHK_DIR, sess.graph)
+test_writer = tf.summary.FileWriter(CHK_DIR)
+
+
 saver = tf.train.Saver()
 
 
@@ -255,10 +275,12 @@ def next_feed(from_,to_,batch_size):
   	# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
 
 
-	encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source)
+	encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source, reverse_input=False)
 	# print("encoder lengths",encoder_input_lengths_)
+	'''encoder_inputs_reverse'''
+	
 	decoder_targets_, decoder_inputs_length_ = helpers.batch(
-	    [(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target]
+	    [(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target], reverse_input=False
 	    )
 	# print("decoder lengths",decoder_inputs_length_)
 	return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_,
@@ -282,7 +304,8 @@ def train(batch_size_,load_checkpoint=False):
 		loss_track = []
 		
 		#tensorboard
-		writer = tf.summary.FileWriter('log', sess.graph)
+		# writer = tf.summary.FileWriter(CHK_DIR, sess.graph)
+		
 		_,eng_words = utils.initialize_vocabulary(from_vocab_path)
 		_,fr_words = utils.initialize_vocabulary(to_vocab_path)
 
@@ -290,10 +313,12 @@ def train(batch_size_,load_checkpoint=False):
 		try:
 		    for batch in range(max_batches):
 		        fd = next_feed(from_train,to_train,batch_size)
-		        _, l = sess.run([train_op, loss], fd)
+		        _, l,summary = sess.run([train_op, loss,merged], fd)
 		        perplexity = math.exp(float(l)) if l < 300 else float("inf")
 
 		        loss_track.append(perplexity)
+		        test_writer.add_summary(summary, batch)
+
 
 		        if batch == 0 or batch % batches_in_epoch == 0:
 		            fd2 = next_feed(from_dev, to_dev,batch_size)
@@ -312,19 +337,23 @@ def train(batch_size_,load_checkpoint=False):
 		                print('  sample {}:'.format(i + 1))
 		                print('    input     > {}'.format(inp))
 		                print('    predicted > {}'.format(pred))
-		                input_str = [eng_words[x] for x in inp if x != 0]
-		                try:
-		                	target_str = [fr_words[x] for x in pred]
-		                except:
-		                	print('something happended')
-		                	print(pred)
-		                	for x in pred:
-		                		print x
+		                # input_str = [eng_words[x] for x in inp if x != 0]
+		                # target_str =[]
+		                # for x in pred:
+		                # 	target_str.append(fr_words[x])
+		                # # try:
+		                # # 	target_str = [ for x in pred]
+		                # # except:
+		                # # 	print('something happended')
+		                # # 	print(pred)
+		                # # 	for x in pred:
+		                # # 		print x
 
-		               	input_string = " ".join([str(x) for x in input_str  ])
-		                target_string =" ".join([str(x) for x in target_str ])
-		                print('      input   >',input_string)
-		                print('    predicted >',target_string)
+
+		               	# input_string = " ".join([str(x) for x in input_str  ])
+		                # target_string =" ".join([str(x) for x in target_str ])
+		                # print('      input   >',input_string)
+		                # print('    predicted >',target_string)
 
 
 		                # print('    predicted > {}'.format(fr_words[pred]]
@@ -344,25 +373,26 @@ def train(batch_size_,load_checkpoint=False):
 
 		except KeyboardInterrupt:
 		    print('training interrupted')
+		# config = tf.contrib.tensorboard.plugins.projector.ProjectorConfig()
+		# embedding_conf = config.embeddings.add()
+		# embedding_conf.tensor_name = embeddings_eng.name
+		# projector.visualize_embeddings(writer, config)
 		return loss_track
 
 	
 	
 
 
-optimizer_data = open("effect_of_optimizer.csv",'a+')
-writer = csv.writer(optimizer_data, delimiter=',',
+input_data = open("effect_of_bidirectional_encoder.csv",'a+')
+csvwriter = csv.writer(input_data, delimiter=',',
                             quotechar='|', quoting=csv.QUOTE_MINIMAL)
 
 loss = train(10)
-writer.writerow(['adam']+loss)
+csvwriter.writerow(['bidirectional-normal-input']+loss)
 
 
 	# print('loss {:.4f} after {} examples (batch_size={})'.format(loss_track[-1], len(loss_track)*batch_size, batch_size))
-	# config = tf.contrib.tensorboard.plugins.projector.ProjectorConfig()
-	# embedding_conf = config.embeddings.add()
-	# embedding_conf.tensor_name = embeddings.name
-	# projector.visualize_embeddings(writer, config)
+
 
 	# embedding_conf.metadata_path = os.path.join( 'metadata.tsv')
 
