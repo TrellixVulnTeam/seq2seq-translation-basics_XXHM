@@ -76,8 +76,8 @@ def get_batch(filename1, filename2,batch_size):
     lines_indices = random.sample(range(0,len(lines1)),batch_size)
     batch_source = [lines1[x].strip().split() for x in lines_indices]
     batch_target = [lines2[x].strip().split() for x in lines_indices]
-    batch_source = [map(int,x) for x in batch_source]
-    batch_target = [map(int,x) for x in batch_target]
+    batch_source = [list(map(int,x)) for x in batch_source]
+    batch_target = [list(map(int,x)) for x in batch_target]
     return batch_source, batch_target
 
 

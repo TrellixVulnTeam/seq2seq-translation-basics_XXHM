@@ -1,4 +1,4 @@
-import data_utils as utils
+import data_custom_utils as utils
 import numpy as np
 import tensorflow as tf
 import helpers
@@ -7,6 +7,8 @@ import os
 import random
 import math
 import csv
+import copy
+import sys
 #=====================DEFINE DATA SOURCES============================================#
 data_dir = "data"
 from_train_path = "data/eng_french_data/eng_train_data"
@@ -22,13 +24,14 @@ tf.reset_default_graph()
 PAD = 0
 EOS = 1
 
-vocab_size_encoder = 1700 #pseudo vocab size
-vocab_size_decoder = 2300
+
+
 input_embedding_size = 20
 encoder_hidden_units = 20 
 decoder_hidden_units = 40
 max_batches = 6001
 batches_in_epoch = 201
+number_of_layers = 3
 
 ## In the original paper, it was 1000, we can increase it
 
@@ -36,13 +39,22 @@ batches_in_epoch = 201
 
 #=====================PREPARE TRAINING DATA============================================#
 
-from_train, to_train, from_dev, to_dev, from_vocab_path, to_vocab_path = utils.prepare_data(data_dir, 
- 	from_train_path, 
- 	to_train_path, 
- 	from_dev_path, 
- 	to_dev_path, 
- 	vocab_size_encoder,
-   vocab_size_decoder)
+# from_train, to_train, from_dev, to_dev, from_vocab_path, to_vocab_path = utils.prepare_data(data_dir, 
+#  	from_train_path, 
+#  	to_train_path, 
+#  	from_dev_path, 
+#  	to_dev_path, 
+#  	vocab_size_encoder,
+#    vocab_size_decoder)
+
+from_train, source_to_token, token_to_source = utils.tokenize(from_train_path)
+to_train, target_to_token, token_to_target = utils.tokenize(to_train_path)
+from_dev = utils.tokenize_file(from_dev_path, source_to_token)
+to_dev = utils.tokenize_file(to_dev_path, target_to_token)
+
+
+vocab_size_encoder = len(source_to_token.keys()) #pseudo vocab size
+vocab_size_decoder = len(target_to_token.keys())
 
 
 #====================BUILD THE TENSORFLOW GRAPH =======================================#
@@ -75,7 +87,8 @@ embeddings_fr = tf.Variable(tf.random_uniform([vocab_size_decoder, input_embeddi
 with tf.variable_scope('encoder') as scope:
 
 	encoder_inputs_embedded = tf.nn.embedding_lookup(embeddings_eng, encoder_inputs)
-	encoder_cell = tf.contrib.rnn.BasicLSTMCell(encoder_hidden_units)
+	lstm_cell = tf.contrib.rnn.BasicLSTMCell(encoder_hidden_units)
+	encoder_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell] * number_of_layers,state_is_tuple=True)
 	# make encoder system using dynamic RNN which does BAsic RNN under the hood
 	# 
 	# vanilla encoder
@@ -105,18 +118,30 @@ with tf.variable_scope('encoder') as scope:
 	#letters h and c are commonly used to denote "output value" and "cell state". 
 	#http://colah.github.io/posts/2015-08-Understanding-LSTMs/ 
 	#Those tensors represent combined internal state of the cell, and should be passed together. 
+	encoder_final_state = [0]*number_of_layers
+	for i in range(len(encoder_final_state)):
+		state_c = tf.concat(
+		(encoder_fw_final_state[i].c, encoder_bw_final_state[i].c), 1)
+		state_h = tf.concat(
+		(encoder_fw_final_state[i].h, encoder_bw_final_state[i].h), 1)
+		final_state  = tf.contrib.rnn.LSTMStateTuple(
+		    c=state_c,
+		    h=state_h
+		)
+		encoder_final_state[i] = final_state
+	encoder_final_state = tuple(encoder_final_state)
+	# encoder_final_state_c = tf.concat(
+	#     (encoder_fw_final_state[-1].c, encoder_bw_final_state[-1].c), 1)
 
-	encoder_final_state_c = tf.concat(
-	    (encoder_fw_final_state.c, encoder_bw_final_state.c), 1)
+	# encoder_final_state_h = tf.concat(
+	#     (encoder_fw_final_state[-1].h, encoder_bw_final_state[-1].h), 1)
 
-	encoder_final_state_h = tf.concat(
-	    (encoder_fw_final_state.h, encoder_bw_final_state.h), 1)
-
-	#TF Tuple used by LSTM Cells for state_size, zero_state, and output state.
-	encoder_final_state = tf.contrib.rnn.LSTMStateTuple(
-	    c=encoder_final_state_c,
-	    h=encoder_final_state_h
-	)
+	# #TF Tuple used by LSTM Cells for state_size, zero_state, and output state.
+	# encoder_final_state = tf.contrib.rnn.LSTMStateTuple(
+	#     c=encoder_final_state_c,
+	#     h=encoder_final_state_h
+	# )
+	# encoder_final_state = encoder_fw_final_state
 
 '''				  ___  ___ ___ ___  ___  ___ ___ 
 				 |   \| __/ __/ _ \|   \| __| _ \
@@ -127,7 +152,10 @@ with tf.variable_scope('encoder') as scope:
 
 with tf.variable_scope('decoder') as scope:
 
-	decoder_cell = tf.contrib.rnn.BasicLSTMCell(decoder_hidden_units)
+	# decoder_cell = tf.contrib.rnn.BasicLSTMCell(decoder_hidden_units)
+	lstm_cell = tf.contrib.rnn.BasicLSTMCell(decoder_hidden_units)
+	decoder_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell] * number_of_layers,state_is_tuple=True)
+
 	encoder_max_time, batch_size = tf.unstack(tf.shape(encoder_inputs))
 	decoder_lengths = decoder_inputs_length
 	# print(decoder_lengths)
@@ -269,10 +297,11 @@ saver = tf.train.Saver()
 def next_feed(from_,to_,batch_size):
 		
   	# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
-  	batch_source,batch_target = helpers.get_batch(from_, to_, batch_size)
+	# print(from_,to_)
+	batch_source,batch_target = helpers.get_batch(from_, to_, batch_size)
 
-  	# [train_from_lines[x].strip().split() for x in lines_indices]
-  	# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
+	# [train_from_lines[x].strip().split() for x in lines_indices]
+	# batch_target = [train_to_lines[x].strip().split() for x in lines_indices]
 
 
 	encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source, reverse_input=False)
@@ -289,7 +318,7 @@ def next_feed(from_,to_,batch_size):
 
 
 def train(batch_size_,load_checkpoint=False):
-	print("calling train-size")
+	# print("calling train-size")
 	with tf.Session() as sess:
 		
 		ckpt = tf.train.get_checkpoint_state(CHK_DIR)
@@ -301,13 +330,16 @@ def train(batch_size_,load_checkpoint=False):
 			sess.run(tf.global_variables_initializer())
 		###Training
 		batch_size = batch_size_
-		loss_track = []
+		loss_train = []
+		loss_dev = []
 		
 		#tensorboard
 		# writer = tf.summary.FileWriter(CHK_DIR, sess.graph)
 		
-		_,eng_words = utils.initialize_vocabulary(from_vocab_path)
-		_,fr_words = utils.initialize_vocabulary(to_vocab_path)
+		# _,eng_words = utils.initialize_vocabulary(from_vocab_path)
+		# _,fr_words = utils.initialize_vocabulary(to_vocab_path)
+		eng_words = token_to_source
+		fr_words = token_to_target
 
 
 		try:
@@ -316,7 +348,7 @@ def train(batch_size_,load_checkpoint=False):
 		        _, l,summary = sess.run([train_op, loss,merged], fd)
 		        perplexity = math.exp(float(l)) if l < 300 else float("inf")
 
-		        loss_track.append(perplexity)
+		        loss_train.append(perplexity)
 		        test_writer.add_summary(summary, batch)
 
 
@@ -326,7 +358,7 @@ def train(batch_size_,load_checkpoint=False):
 		            # sess.run(embeddings)
 		            l2 = sess.run(loss, fd2)
 		            p_ = math.exp(float(l2)) if l2 < 300 else float("inf")
-
+		            loss_dev.append(p_)
 
 		            print('batch {}'.format(batch))
 		            print('  minibatch perplexity: {}'.format(p_))
@@ -337,23 +369,23 @@ def train(batch_size_,load_checkpoint=False):
 		                print('  sample {}:'.format(i + 1))
 		                print('    input     > {}'.format(inp))
 		                print('    predicted > {}'.format(pred))
-		                # input_str = [eng_words[x] for x in inp if x != 0]
-		                # target_str =[]
-		                # for x in pred:
-		                # 	target_str.append(fr_words[x])
-		                # # try:
-		                # # 	target_str = [ for x in pred]
-		                # # except:
-		                # # 	print('something happended')
-		                # # 	print(pred)
-		                # # 	for x in pred:
-		                # # 		print x
+		                input_str = [eng_words[x] for x in inp if x != 0]
+		                target_str =[]
+		                for x in pred:
+		                	target_str.append(fr_words[x])
+		                # try:
+		                # 	target_str = [x for x in pred]
+		                # except:
+		                # 	print('something happended')
+		                # 	print(pred)
+		                # 	for x in pred:
+		                # 		print(x)
 
 
-		               	# input_string = " ".join([str(x) for x in input_str  ])
-		                # target_string =" ".join([str(x) for x in target_str ])
-		                # print('      input   >',input_string)
-		                # print('    predicted >',target_string)
+		               	input_string = " ".join([str(x) for x in input_str  ])
+		                target_string =" ".join([str(x) for x in target_str ])
+		                print('      input   >',input_string)
+		                print('    predicted >',target_string)
 
 
 		                # print('    predicted > {}'.format(fr_words[pred]]
@@ -377,18 +409,24 @@ def train(batch_size_,load_checkpoint=False):
 		# embedding_conf = config.embeddings.add()
 		# embedding_conf.tensor_name = embeddings_eng.name
 		# projector.visualize_embeddings(writer, config)
-		return loss_track
+		return loss_train, loss_dev
 
 	
 	
 
 
-input_data = open("effect_of_bidirectional_encoder.csv",'a+')
-csvwriter = csv.writer(input_data, delimiter=',',
+train_loss_file = open("effect_of_deep_bidirectional_encoder_train.csv",'a+')
+dev_loss_file = open("effect_of_deep_bidirectional_encoder_dev.csv",'a+')
+
+csvwriter1 = csv.writer(train_loss_file, delimiter=',',
+                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
+csvwriter2 = csv.writer(dev_loss_file, delimiter=',',
                             quotechar='|', quoting=csv.QUOTE_MINIMAL)
 
-loss = train(10)
-csvwriter.writerow(['bidirectional-normal-input']+loss)
+loss_train, loss_dev = train(10)
+csvwriter1.writerow(['deep_bidirectional_encoder_normal_input_3_layer_train']+loss_train)
+csvwriter2.writerow(['deep_bidirectional_encoder_normal_input_3_layer_dev']+loss_dev)
+
 
 
 	# print('loss {:.4f} after {} examples (batch_size={})'.format(loss_track[-1], len(loss_track)*batch_size, batch_size))
