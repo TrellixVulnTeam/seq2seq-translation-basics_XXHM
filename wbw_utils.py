@@ -21,9 +21,9 @@ import data_custom_utils as du
 #create a eng_french token dictionary _word by word
 eng_fr_dic = {}
 fr_eng_dic = {}
-
-lines_eng = open('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/eng_vocab').readlines()
-lines_fr = open('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/eng_vocab').readlines()
+home = os.getcwd()
+lines_eng = open(home+'/data/french_french_data/eng_vocab').readlines()
+lines_fr = open(home+'/data/french_french_data/eng_vocab').readlines()
 
 for i in range(len(lines_eng)):
 	l = lines_eng[i].strip()
