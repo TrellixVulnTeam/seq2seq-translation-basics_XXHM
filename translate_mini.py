@@ -1,4 +1,5 @@
 import data_custom_utils as utils
+import wbw_utils as wbw_utils
 import numpy as np
 import tensorflow as tf
 import helpers
@@ -9,13 +10,16 @@ import math
 import csv
 import copy
 import sys
+import nltk
 #=====================DEFINE DATA SOURCES============================================#
 data_dir = "data"
-from_train_path = "data/eng_french_data/eng_train_data"
-to_train_path = "data/eng_french_data/fr_train_data"
-from_dev_path = "data/eng_french_data/eng_test_data"
-to_dev_path = "data/eng_french_data/fr_test_data"
-CHK_DIR="./data/checkpoints"
+
+home =  os.getcwd()
+print("home", home)
+from_train_path = home+"/data/eng_french_data/eng_train_data"
+to_train_path = home+"/data/eng_french_data/fr_train_data"
+from_dev_path = home+"/data/eng_french_data/eng_test_data"
+to_dev_path = home+"/data/eng_french_data/fr_test_data"
 LOGDIR = "./log"
 
 
@@ -24,13 +28,16 @@ tf.reset_default_graph()
 PAD = 0
 EOS = 1
 
+NORMAL = 0
+WBW = 1
+
 
 
 input_embedding_size = 20
 encoder_hidden_units = 20 
 decoder_hidden_units = 40
-max_batches = 6001
-batches_in_epoch = 201
+max_batches = 8001
+batches_in_epoch = 10
 number_of_layers = 3
 
 ## In the original paper, it was 1000, we can increase it
@@ -38,33 +45,46 @@ number_of_layers = 3
 
 
 #=====================PREPARE TRAINING DATA============================================#
+arguments = ['wbw','train']
+if (len(sys.argv) < 3):
+	print("Using default values")
+else:
+	arguments[0] = sys.argv[1]
+	arguments[1] = sys.argv[2]
 
-# from_train, to_train, from_dev, to_dev, from_vocab_path, to_vocab_path = utils.prepare_data(data_dir, 
-#  	from_train_path, 
-#  	to_train_path, 
-#  	from_dev_path, 
-#  	to_dev_path, 
-#  	vocab_size_encoder,
-#    vocab_size_decoder)
-
-from_train, source_to_token, token_to_source = utils.tokenize(from_train_path)
-to_train, target_to_token, token_to_target = utils.tokenize(to_train_path)
-from_dev = utils.tokenize_file(from_dev_path, source_to_token)
-to_dev = utils.tokenize_file(to_dev_path, target_to_token)
-
-
+mode = arguments[0]
+user_test = False if arguments[1] == "train" else True
+if (mode == 'h' or mode == 'help'):
+	print("usage: translate_mini.py <mode> <train/test>")
+	exit()
+if ( mode== 'normal'):
+	CHK_DIR=home+"/data/normal_checkpoints"
+	from_train, source_to_token, token_to_source = utils.tokenize(from_train_path)
+	to_train, target_to_token, token_to_target = utils.tokenize(to_train_path)
+	from_dev = utils.tokenize_file(from_dev_path, source_to_token)
+	to_dev = utils.tokenize_file(to_dev_path, target_to_token)
+elif (mode == "wbw"):
+	CHK_DIR=home+"/data/wbw_checkpoints"
+	from_train, to_train, from_dev, to_dev, source_to_token, token_to_source = wbw_utils.tokenize()
+	eng_fr_dic, fr_eng_dic = wbw_utils.get_dictionaries()
+	target_to_token = source_to_token
+	token_to_target = token_to_source
+else:
+	print("only normal and wbw mode available")
+	exit()
 vocab_size_encoder = len(source_to_token.keys()) #pseudo vocab size
 vocab_size_decoder = len(target_to_token.keys())
 
 
+
 #====================BUILD THE TENSORFLOW GRAPH =======================================#
 '''
-    ____  __  ________    ____     ________  ________   __________  ___    ____  __  __
+	____  __  ________    ____     ________  ________   __________  ___    ____  __  __
    / __ )/ / / /  _/ /   / __ \   /_  __/ / / / ____/  / ____/ __ \/   |  / __ \/ / / /
   / __  / / / // // /   / / / /    / / / /_/ / __/    / / __/ /_/ / /| | / /_/ / /_/ / 
  / /_/ / /_/ // // /___/ /_/ /    / / / __  / /___   / /_/ / _, _/ ___ |/ ____/ __  /  
 /_____/\____/___/_____/_____/    /_/ /_/ /_/_____/   \____/_/ |_/_/  |_/_/   /_/ /_/   
-                                                                                       
+																					   
 '''
 
 
@@ -75,18 +95,22 @@ decoder_targets= tf.placeholder(shape = (None,None), dtype= tf.int32, name = "de
 decoder_inputs_length = tf.placeholder(shape = (None,), dtype= tf.int32, name = "encoder_inputs_length")
 
 # build embeddings
-embeddings_eng = tf.Variable(tf.random_uniform([vocab_size_encoder, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
-embeddings_fr = tf.Variable(tf.random_uniform([vocab_size_decoder, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
+embeddings_source = tf.Variable(tf.random_uniform([vocab_size_encoder, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
+if (mode == "normal"):
+	embeddings_target = tf.Variable(tf.random_uniform([vocab_size_decoder, input_embedding_size] ,-1.0,1, dtype = tf.float32),name="embedding_name")
+else: #because in word by word, source and target language same
+	embeddings_target = embeddings_source
+
 
 
 '''				  ___ _  _  ___ ___  ___  ___ ___ 
 				 | __| \| |/ __/ _ \|   \| __| _ \
 				 | _|| .` | (_| (_) | |) | _||   /
 				 |___|_|\_|\___\___/|___/|___|_|_\
-				                                  '''
+												  '''
 with tf.variable_scope('encoder') as scope:
 
-	encoder_inputs_embedded = tf.nn.embedding_lookup(embeddings_eng, encoder_inputs)
+	encoder_inputs_embedded = tf.nn.embedding_lookup(embeddings_source, encoder_inputs)
 	lstm_cell = tf.contrib.rnn.BasicLSTMCell(encoder_hidden_units)
 	encoder_cell = tf.contrib.rnn.MultiRNNCell([lstm_cell] * number_of_layers,state_is_tuple=True)
 	# make encoder system using dynamic RNN which does BAsic RNN under the hood
@@ -97,10 +121,10 @@ with tf.variable_scope('encoder') as scope:
 	# 		sequence_length = encoder_inputs_length, 
 	# 		dtype =tf.float32,
 	# 		time_major = True) 
-			# SEE API details, basically if trsue, these Tensors must be shaped [max_time, batch_size, depth].
-			# If false, these Tensors must be shaped [batch_size, max_time, depth].True is a bit more efficient because it avoids 
-			# transposes at the beginning and end of the RNN calculation. However, most TensorFlow data is batch-major, so by default
-			#  this function accepts input and emits output in batch-major form.
+	# 		# SEE API details, basically if trsue, these Tensors must be shaped [max_time, batch_size, depth].
+	# 		# If false, these Tensors must be shaped [batch_size, max_time, depth].True is a bit more efficient because it avoids 
+	# 		# transposes at the beginning and end of the RNN calculation. However, most TensorFlow data is batch-major, so by default
+	# 		#  this function accepts input and emits output in batch-major form.
 
 
 
@@ -125,23 +149,14 @@ with tf.variable_scope('encoder') as scope:
 		state_h = tf.concat(
 		(encoder_fw_final_state[i].h, encoder_bw_final_state[i].h), 1)
 		final_state  = tf.contrib.rnn.LSTMStateTuple(
-		    c=state_c,
-		    h=state_h
+			c=state_c,
+			h=state_h
 		)
 		encoder_final_state[i] = final_state
 	encoder_final_state = tuple(encoder_final_state)
-	# encoder_final_state_c = tf.concat(
-	#     (encoder_fw_final_state[-1].c, encoder_bw_final_state[-1].c), 1)
 
-	# encoder_final_state_h = tf.concat(
-	#     (encoder_fw_final_state[-1].h, encoder_bw_final_state[-1].h), 1)
 
-	# #TF Tuple used by LSTM Cells for state_size, zero_state, and output state.
-	# encoder_final_state = tf.contrib.rnn.LSTMStateTuple(
-	#     c=encoder_final_state_c,
-	#     h=encoder_final_state_h
-	# )
-	# encoder_final_state = encoder_fw_final_state
+
 
 '''				  ___  ___ ___ ___  ___  ___ ___ 
 				 |   \| __/ __/ _ \|   \| __| _ \
@@ -174,8 +189,8 @@ with tf.variable_scope('decoder') as scope:
 	pad_time_slice = tf.zeros([batch_size], dtype=tf.int32, name='PAD')
 
 	#retrieves rows of the params tensor. The behavior is similar to using indexing with arrays in numpy
-	eos_step_embedded = tf.nn.embedding_lookup(embeddings_fr, eos_time_slice)
-	pad_step_embedded = tf.nn.embedding_lookup(embeddings_fr, pad_time_slice)
+	eos_step_embedded = tf.nn.embedding_lookup(embeddings_target, eos_time_slice)
+	pad_step_embedded = tf.nn.embedding_lookup(embeddings_target, pad_time_slice)
 
 
 
@@ -215,7 +230,7 @@ with tf.variable_scope('decoder') as scope:
 			#returns the index with highest probability
 			prediction=tf.argmax(output_logits, axis = 1)
 
-			next_input = tf.nn.embedding_lookup(embeddings_fr, prediction)
+			next_input = tf.nn.embedding_lookup(embeddings_target, prediction)
 			return next_input
 
 
@@ -272,7 +287,7 @@ with tf.variable_scope('decoder') as scope:
 	###OPTIMIZE
 	stepwise_cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
 		labels=tf.one_hot(decoder_targets, depth=vocab_size_decoder, dtype=tf.float32),
-	    logits=decoder_logits,
+		logits=decoder_logits,
 	)
 
 	#loss function
@@ -296,7 +311,7 @@ saver = tf.train.Saver()
 #to_ : the target file
 def next_feed(from_,to_,batch_size):
 		
-  	# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
+	# lines_indices = random.sample(range(0,len(train_from_lines)),batch_size)
 	# print(from_,to_)
 	batch_source,batch_target = helpers.get_batch(from_, to_, batch_size)
 
@@ -309,25 +324,62 @@ def next_feed(from_,to_,batch_size):
 	'''encoder_inputs_reverse'''
 	
 	decoder_targets_, decoder_inputs_length_ = helpers.batch(
-	    [(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target], reverse_input=False
-	    )
+		[(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target], reverse_input=False
+		)
 	# print("decoder lengths",decoder_inputs_length_)
 	return { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_,
 		decoder_inputs_length: decoder_inputs_length_}
 
 
 
-def train(batch_size_,load_checkpoint=False):
+
+###
+#  #####  ###       #     # #   # 
+#    #    ###     # # #   # # # #
+#    #    #  #   #     #  # #   #
+#
+###########
+
+
+
+
+
+
+sess = tf.Session()
+global_step = 0
+
+
+def init_session(load_checkpoint=True):
+	ckpt = tf.train.get_checkpoint_state(CHK_DIR)
+	print(CHK_DIR)
+	print(ckpt)
+	if load_checkpoint and ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
+		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+		saver.restore(sess, ckpt.model_checkpoint_path)
+		global_step =int(ckpt.model_checkpoint_path.split("-")[-1])
+	else:
+		print("Created model with fresh parameters.")
+		sess.run(tf.global_variables_initializer())
+	return sess
+
+init_session()
+def run(batch_size_, user_test= False):
 	# print("calling train-size")
-	with tf.Session() as sess:
-		
-		ckpt = tf.train.get_checkpoint_state(CHK_DIR)
-		if load_checkpoint and ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
-			print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-			saver.restore(sess, ckpt.model_checkpoint_path)
-		else:
-			print("Created model with fresh parameters.")
-			sess.run(tf.global_variables_initializer())
+	print("user_test is" ,user_test)
+	config = tf.ConfigProto()
+	if (1 < 2) :
+	# config.gpu_options.allocator_type = 'BFC'
+	# config.gpu_options.per_process_gpu_memory_fraction=0.5
+	# with tf.Session(config = config) as sess:
+	# 	global_step = 0
+	# 	ckpt = tf.train.get_checkpoint_state(CHK_DIR)
+	# 	if load_checkpoint and ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
+	# 		print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+	# 		saver.restore(sess, ckpt.model_checkpoint_path)
+	# 		global_step =int(ckpt.model_checkpoint_path.split("-")[-1])
+	# 	else:
+	# 		print("Created model with fresh parameters.")
+	# 		sess.run(tf.global_variables_initializer())
 		###Training
 		batch_size = batch_size_
 		loss_train = []
@@ -336,97 +388,124 @@ def train(batch_size_,load_checkpoint=False):
 		#tensorboard
 		# writer = tf.summary.FileWriter(CHK_DIR, sess.graph)
 		
-		# _,eng_words = utils.initialize_vocabulary(from_vocab_path)
+		# _,token_to_source = utils.initialize_vocabulary(from_vocab_path)
 		# _,fr_words = utils.initialize_vocabulary(to_vocab_path)
-		eng_words = token_to_source
-		fr_words = token_to_target
+		# fr_words = token_to_target
 
 
 		try:
-		    for batch in range(max_batches):
-		        fd = next_feed(from_train,to_train,batch_size)
-		        _, l,summary = sess.run([train_op, loss,merged], fd)
-		        perplexity = math.exp(float(l)) if l < 300 else float("inf")
+			if user_test == False:  #train
+				for batch in range(max_batches):
+					fd = next_feed(from_train,to_train,batch_size)
+					_, l,summary = sess.run([train_op, loss,merged], fd)
+					perplexity = math.exp(float(l)) if l < 300 else float("inf")
 
-		        loss_train.append(perplexity)
-		        test_writer.add_summary(summary, batch)
-
-
-		        if batch == 0 or batch % batches_in_epoch == 0:
-		            fd2 = next_feed(from_dev, to_dev,batch_size)
-		            saver.save(sess, os.path.join(CHK_DIR, "model.ckpt"), batch)
-		            # sess.run(embeddings)
-		            l2 = sess.run(loss, fd2)
-		            p_ = math.exp(float(l2)) if l2 < 300 else float("inf")
-		            loss_dev.append(p_)
-
-		            print('batch {}'.format(batch))
-		            print('  minibatch perplexity: {}'.format(p_))
-		            predict_ = sess.run(decoder_prediction, fd2)
-		            
-		            pred_str = []
-		            for i, (inp, pred) in enumerate(zip(fd[encoder_inputs].T, predict_.T)):
-		                print('  sample {}:'.format(i + 1))
-		                print('    input     > {}'.format(inp))
-		                print('    predicted > {}'.format(pred))
-		                input_str = [eng_words[x] for x in inp if x != 0]
-		                target_str =[]
-		                for x in pred:
-		                	target_str.append(fr_words[x])
-		                # try:
-		                # 	target_str = [x for x in pred]
-		                # except:
-		                # 	print('something happended')
-		                # 	print(pred)
-		                # 	for x in pred:
-		                # 		print(x)
+					loss_train.append(perplexity)
+					test_writer.add_summary(summary, batch)
 
 
-		               	input_string = " ".join([str(x) for x in input_str  ])
-		                target_string =" ".join([str(x) for x in target_str ])
-		                print('      input   >',input_string)
-		                print('    predicted >',target_string)
+					if batch+global_step == 0 or batch+global_step % batches_in_epoch == 0:
+						fd2 = next_feed(from_dev, to_dev,batch_size)
+						saver.save(sess, os.path.join(CHK_DIR, "model.ckpt"), batch)
+						# sess.run(embeddings)
+						l2 = sess.run(loss, fd2)
+						p_ = math.exp(float(l2)) if l2 < 300 else float("inf")
+						loss_dev.append(p_)
 
+						print('batch {}'.format(batch+global_step))
+						print('  minibatch perplexity: {}'.format(p_))
+						predict_ = sess.run(decoder_prediction, fd2)
+						
+						pred_str = []
+						for i, (inp, pred) in enumerate(zip(fd2[encoder_inputs].T, predict_.T)):
+							print('  sample {}:'.format(i + 1))
+							# print('    input     > {}'.format(inp))
+							# print('    predicted > {}'.format(pred))
 
-		                # print('    predicted > {}'.format(fr_words[pred]]
-		                # input_str.append(eng_words[inp])
-		                # pred_str.append(fr_words[pred])
-		                # print('    input     > {}'.format(eng_words[inp]))
-		                # print('    predicted > {}'.format(fr_words[pred]))
-		                if i >= 2:
-		                    break
+							input_str = [token_to_source[x] for x in inp if x != 0]
 
-		            print()
-		            # print("".join([str(x) for x in pred_str ]))
-		
+							
+							target_str =[]
+							for x in pred:
+								if x != 0:
+									target_str.append(token_to_target[x])
+							input_string = " ".join([str(x) for x in input_str  ])
+							target_string =" ".join([str(x) for x in target_str ])
+							print('      input   >',input_string)
+							print('    predicted >',target_string)
+							if i >= 2:
+								break
 
+						print()
+			else: #test
+				batch_size_ = 1
+				sys.stdout.write("> ")
+				sys.stdout.flush()
+				sentence = sys.stdin.readline()
+				while sentence:
+					words = nltk.word_tokenize(sentence)
+					if mode == "wbw":
+						wbw_words = [eng_fr_dic.get(w,"UNK") for w in words]
+						print("wbw> ", " ".join([w for w in wbw_words]))
+						#if word by word, then first get french word and then tokenize
+						#if wbw, source_to_token dictionary will map french words t token
+						batch_source = [[source_to_token.get(w,2) for w in wbw_words]]						
+					else:
+						batch_source = [[source_to_token.get(w,2) for w in words]]
 
+					batch_target = [[1]*len(batch_source)]
+					# print(tokenized_sentence)
+					# print(ra)
+					encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source, reverse_input=False)
+					decoder_targets_, decoder_inputs_length_ = helpers.batch(
+					[(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target], reverse_input=False
+					)
 
+					feed = { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_, decoder_inputs_length: decoder_inputs_length_}
+					predict_ = sess.run(decoder_prediction, feed)
+					output_str = [token_to_target[out] for out in predict_.T[0]]
+					print(" ".join([s for s in output_str]))
+					print("> ", end="")
+					sys.stdout.flush()
+					sentence = sys.stdin.readline()
 
 		except KeyboardInterrupt:
-		    print('training interrupted')
-		# config = tf.contrib.tensorboard.plugins.projector.ProjectorConfig()
-		# embedding_conf = config.embeddings.add()
-		# embedding_conf.tensor_name = embeddings_eng.name
-		# projector.visualize_embeddings(writer, config)
+			print('training interrupted')
 		return loss_train, loss_dev
 
+def get_translation(eng_sentence):	
+	batch_size_ = 1
+	words = nltk.word_tokenize(eng_sentence)
+	wbw_words = [eng_fr_dic.get(w,"UNK") for w in words]
+	print("wbw> ", " ".join([w for w in wbw_words]))
+	#if word by word, then first get french word and then tokenize
+	#if wbw, source_to_token dictionary will map french words t token
+	batch_source = [[source_to_token.get(w,2) for w in wbw_words]]
+	batch_target = [[1]*len(batch_source)]
+	encoder_inputs_, encoder_input_lengths_ = helpers.batch(batch_source, reverse_input=False)
+	decoder_targets_, decoder_inputs_length_ = helpers.batch(
+	[(sequence) + [EOS] + [PAD] * (2) for sequence in batch_target], reverse_input=False
+	)
+
+	feed = { encoder_inputs: encoder_inputs_, encoder_inputs_length: encoder_input_lengths_, decoder_targets: decoder_targets_, decoder_inputs_length: decoder_inputs_length_}
+	predict_ = sess.run(decoder_prediction, feed)
+	output_str = [token_to_target[out] for out in predict_.T[0]]
+	output_str= " ".join([s for s in output_str])
+	return output_str
+
+
 	
-	
+def write_results(loss_train,loss_test, mode):
+	train_loss_file = open("results_train.csv",'a+')
+	dev_loss_file = open("results_test.csv",'a+')
 
+	csvwriter1 = csv.writer(train_loss_file, delimiter=',',
+								quotechar='|', quoting=csv.QUOTE_MINIMAL)
+	csvwriter2 = csv.writer(dev_loss_file, delimiter=',',
+								quotechar='|', quoting=csv.QUOTE_MINIMAL)
 
-train_loss_file = open("effect_of_deep_bidirectional_encoder_train.csv",'a+')
-dev_loss_file = open("effect_of_deep_bidirectional_encoder_dev.csv",'a+')
-
-csvwriter1 = csv.writer(train_loss_file, delimiter=',',
-                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
-csvwriter2 = csv.writer(dev_loss_file, delimiter=',',
-                            quotechar='|', quoting=csv.QUOTE_MINIMAL)
-
-loss_train, loss_dev = train(10)
-csvwriter1.writerow(['deep_bidirectional_encoder_normal_input_3_layer_train']+loss_train)
-csvwriter2.writerow(['deep_bidirectional_encoder_normal_input_3_layer_dev']+loss_dev)
-
+	csvwriter1.writerow([mode+" "+ str(number_of_layers)+"_train"]+loss_train)
+	csvwriter2.writerow([mode+" "+ str(number_of_layers)+"_test"]+loss_dev)
 
 
 	# print('loss {:.4f} after {} examples (batch_size={})'.format(loss_track[-1], len(loss_track)*batch_size, batch_size))
@@ -434,6 +513,7 @@ csvwriter2.writerow(['deep_bidirectional_encoder_normal_input_3_layer_dev']+loss
 
 	# embedding_conf.metadata_path = os.path.join( 'metadata.tsv')
 
+# loss_train, loss_dev = run(10, user_test=user_test)
 
-
+# print(get_translation("I am dog."))
 
