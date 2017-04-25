@@ -1,6 +1,7 @@
 import sys
 import nltk
 import data_custom_utils as du
+import os
 # eng_vocab_file = open('eng_vocab','a+')
 # dic = {}
 #write out a eng vocab file
