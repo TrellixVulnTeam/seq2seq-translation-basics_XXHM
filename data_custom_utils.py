@@ -1,3 +1,12 @@
+
+#filename: data_custom_utils.py
+#Author: Vivek/Google
+#Date: March 2017
+#Description: Used to tokenize file for eng-french translation
+
+
+
+
 import nltk
 import os 
 fr_dic = {}
@@ -7,7 +16,8 @@ import sys
 PAD = 0
 EOS = 1
 UNK = 2
-# print(sys.version_info < (3,5))
+
+
 def tokenize_file(source_file, source_dic):
 	'''creates two dictionaries and tokenizes file'''
 	
@@ -52,6 +62,7 @@ def tokenize_file(source_file, source_dic):
 
 
 def create_dic(filename):
+	'''creates dictionary with word as key and token as data, and also creates reverse dictionary'''
 	dic = {'_PAD':PAD, '.':EOS, '_UNK':UNK}
 	rev_dic = {PAD:'_PAD', EOS:'.',UNK:'_UNK'}
 	# dic = {}
@@ -67,9 +78,10 @@ def create_dic(filename):
 	return dic, rev_dic
 
 def tokenize(source_file):
+	'''single function which takes care of all things for a file'''
+	'''for a source file, returns the tokenized file, and both mappings'''
 	word_to_token_dic, token_to_word_dic = create_dic(source_file)	
 	token_file= tokenize_file(source_file, word_to_token_dic)
 	return token_file, word_to_token_dic, token_to_word_dic
 
-# print(d)
-# print(len(d.keys()))
+

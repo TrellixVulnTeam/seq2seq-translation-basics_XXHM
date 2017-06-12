@@ -1,7 +1,17 @@
+#filename: wbw_utils.py
+#Author: Vivek
+#Date: March 2017
+#Description: Takes care of tokenizing file during word-by-word french->french
+#translation
+
+
+
+
 import sys
 import nltk
 import data_custom_utils as du
 import os
+
 # eng_vocab_file = open('eng_vocab','a+')
 # dic = {}
 #write out a eng vocab file
@@ -22,7 +32,9 @@ import os
 #create a eng_french token dictionary _word by word
 eng_fr_dic = {}
 fr_eng_dic = {}
-home = os.getcwd()
+
+##change this
+home = '/Users/vivek/Google Drive/Colby17S/translate_mini'
 lines_eng = open(home+'/data/french_french_data/eng_vocab').readlines()
 lines_fr = open(home+'/data/french_french_data/eng_vocab').readlines()
 
@@ -62,7 +74,7 @@ def get_dic():
 	french_to_token_dic = {'_PAD':PAD, '.':EOS, '_UNK':UNK}
 	token_to_french_dic = {PAD:'_PAD', EOS:'.',UNK:'_UNK'}
 
-	lines = open('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/fr_train_data').readlines()
+	lines = open(home+'/data/french_french_data/fr_train_data').readlines()
 	for line in lines:
 		if(sys.version_info < (3,0)):
 			line = line.decode('utf-8').strip()
@@ -77,7 +89,7 @@ def get_dic():
 
 
 
-	lines = open('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/fr_wordbword_train_data').readlines()
+	lines = open(home+'/data/french_french_data/fr_wordbword_train_data').readlines()
 	for line in lines:
 		if(sys.version_info < (3,0)):
 			line = line.decode('utf-8').strip()
@@ -98,10 +110,10 @@ def get_dic():
 #only use to tokenize fr_fr wordby word file and fr_target file
 def tokenize():
 	f2token, token2f = get_dic()
-	train_source_token_file = du.tokenize_file('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/fr_wordbword_train_data',f2token)
-	train_target_token_file = du.tokenize_file('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/fr_train_data',f2token)
-	test_source_token_file = du.tokenize_file('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/fr_wordbword_test_data',f2token)
-	test_target_token_file = du.tokenize_file('/Users/vivek/Google Drive/Colby17S/translate_mini/data/french_french_data/fr_test_data',f2token)
+	train_source_token_file = du.tokenize_file(home+'/data/french_french_data/fr_wordbword_train_data',f2token)
+	train_target_token_file = du.tokenize_file(home+'/data/french_french_data/fr_train_data',f2token)
+	test_source_token_file = du.tokenize_file(home+'/data/french_french_data/fr_wordbword_test_data',f2token)
+	test_target_token_file = du.tokenize_file(home+'/data/french_french_data/fr_test_data',f2token)
 
 	return train_source_token_file, train_target_token_file, test_source_token_file, test_target_token_file,f2token, token2f
 	# print(len(french_to_token_dic.keys()))

@@ -1,3 +1,12 @@
+#filename: translate_mini.py
+#Author: Vivek Sah
+#Date: March 2017
+#Description: The main file which trains the model on eng-fr translation
+
+
+
+#=====================IMPORT LIBRARIES============================================#
+
 import data_custom_utils as utils
 import wbw_utils as wbw_utils
 import numpy as np
@@ -14,8 +23,8 @@ import nltk
 #=====================DEFINE DATA SOURCES============================================#
 data_dir = "data"
 
-home =  os.getcwd()
-print("home", home)
+home = '/Users/vivek/Google Drive/Colby17S/translate_mini'
+
 from_train_path = home+"/data/eng_french_data/eng_train_data"
 to_train_path = home+"/data/eng_french_data/fr_train_data"
 from_dev_path = home+"/data/eng_french_data/eng_test_data"
@@ -333,12 +342,12 @@ def next_feed(from_,to_,batch_size):
 
 
 
-###
-#  #####  ###       #     # #   # 
-#    #    ###     # # #   # # # #
-#    #    #  #   #     #  # #   #
-#
-###########
+#######################################
+#  #####  ###       #     # #    #    #
+#    #    ####    #   #   # # #  #    #
+#    #    ###    # ### #  # #  # #    #
+#    #    #   # #       # # #    #    #
+#######################################
 
 
 
@@ -365,7 +374,7 @@ def init_session(load_checkpoint=True):
 init_session()
 def run(batch_size_, user_test= False):
 	# print("calling train-size")
-	print("user_test is" ,user_test)
+	# print("user_test is" ,user_test)
 	config = tf.ConfigProto()
 	if (1 < 2) :
 	# config.gpu_options.allocator_type = 'BFC'
@@ -513,7 +522,7 @@ def write_results(loss_train,loss_test, mode):
 
 	# embedding_conf.metadata_path = os.path.join( 'metadata.tsv')
 
-# loss_train, loss_dev = run(10, user_test=user_test)
+loss_train, loss_dev = run(10, user_test=user_test)
 
 # print(get_translation("I am dog."))
 

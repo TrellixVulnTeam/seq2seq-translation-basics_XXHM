@@ -1,3 +1,10 @@
+#filename: helpers.py
+#Author: Vivek Sah
+#Date: March 2017
+#Description: Used to convert the data from tokenized files into arrays/matrices
+
+
+
 import numpy as np
 import random
 
